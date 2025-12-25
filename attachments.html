@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Anlagen zur Stunde</title>
+  <style>
+    body{font-family:Arial,Helvetica,sans-serif;padding:12px;background:#f4f6f8;color:#111}
+    .card{background:#fff;padding:12px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.06);max-width:980px;margin:12px auto}
+    .row{display:flex;gap:8px;flex-wrap:wrap}
+    button{padding:8px 10px;border-radius:6px;border:none;background:#0b6cff;color:#fff;cursor:pointer}
+    .muted{background:#888}
+    .preview{max-width:160px;max-height:120px;object-fit:cover;border-radius:6px;border:1px solid #eee;margin:6px}
+    .file-row{display:flex;align-items:center;gap:12px;padding:8px;border-bottom:1px solid #f0f4fb}
+    .progress{height:8px;background:#eef4ff;border-radius:6px;overflow:hidden;width:200px}
+    .progress > i{display:block;height:100%;background:#0b6cff;width:0%}
+    .small{font-size:0.95rem;color:#444}
+    a.file-link{color:#0b6cff;text-decoration:none;margin-right:8px}
+    .meta-line{font-size:0.9rem;color:#666;margin-bottom:8px}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h3>Anlagen zur Stunde</h3>
+    <div id="meta" class="small">Lade Eintragsdaten…</div>
+
+    <div style="margin-top:12px" class="small">Hochladen</div>
+    <div class="row">
+      <label>
+        <div class="small">Galerie (Bilder)</div>
+        <input id="galleryInput" type="file" accept="image/*" multiple>
+      </label>
+
+      <label>
+        <div class="small">Kamera (Mobil)</div>
+        <input id="cameraInput" type="file" accept="image/*" capture="environment">
+      </label>
+
+      <label>
+        <div class="small">PDF</div>
+        <input id="pdfInput" type="file" accept="application/pdf">
+      </label>
+    </div>
+
+    <div style="margin-top:12px">
+      <button id="uploadBtn">Ausgewählte Dateien hochladen</button>
+      <button id="refreshBtn" class="muted">Aktualisieren</button>
+    </div>
+
+    <div style="margin-top:12px" class="small">Hochlade‑Status</div>
+    <div id="status"></div>
+
+    <hr>
+
+    <div class="small">Vorhandene Anlagen</div>
+    <div id="attachmentsList">Lade…</div>
+  </div>
+
+  <!-- Firebase SDKs -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+
+  <script>
+    // -----------------------------
+    // Firebase Konfiguration
+    // -----------------------------
+    // Trage hier deine Firebase‑Config ein (wie in index.html/admin.html)
+    const firebaseConfig = {
+      apiKey: "AIzaSyBdflIYtuxvtzwnJmOIfVwNByR9E7uAnwU",
+      authDomain: "klbuch-57460.firebaseapp.com",
+      projectId: "klbuch-57460"
+      // optional: storageBucket, messagingSenderId, appId
+    };
+    firebase.initializeApp(firebaseConfig);
+  </script>
+
+  <script src="storage.firebase.js"></script>
+
+  <script>
+  (function(){
+    const params = new URLSearchParams(location.search);
+    const entryId = params.get('entryId');
+    const metaEl = document.getElementById('meta');
+    const galleryInput = document.getElementById('galleryInput');
+    const cameraInput = document.getElementById('cameraInput');
+    const pdfInput = document.getElementById('pdfInput');
+    const uploadBtn = document.getElementById('uploadBtn');
+    const refreshBtn = document.getElementById('refreshBtn');
+    const statusEl = document.getElementById('status');
+    const attachmentsList = document.getElementById('attachmentsList');
+
+    if(!entryId){
+      metaEl.textContent = 'Fehler: Keine entryId übergeben.';
+      uploadBtn.disabled = true;
+    }
+
+    // -----------------------------
+    // Cloudinary Konfiguration
+    // -----------------------------
+    // Trage hier deine Cloudinary‑Daten ein, genau wie bei Firebase oben
+    // Beispiel:
+    // const CLOUDINARY_CONFIG = { cloudName: "DEIN_CLOUD_NAME", uploadPreset: "DEIN_UPLOAD_PRESET" };
+    const CLOUDINARY_CONFIG = {
+      cloudName: "dbevz8t2n",
+      uploadPreset: "unsigned_upload"
+    };
+    const USE_CLOUDINARY = Boolean(CLOUDINARY_CONFIG.cloudName && CLOUDINARY_CONFIG.uploadPreset);
+
+    function setStatus(msg, isError){
+      statusEl.textContent = msg;
+      statusEl.style.color = isError ? '#900' : '#111';
+    }
+
+    async function loadEntryMeta(){
+      try {
+        if (window.kbStorage && typeof kbStorage.loadEntry === 'function') {
+          const e = await kbStorage.loadEntry(entryId);
+          metaEl.textContent = `Eintrag: ${e.date || ''} • Stunde ${e.hour || ''} • ${e.course || ''} • ${e.subject || ''}`;
+        } else {
+          metaEl.textContent = `Eintrag ID: ${entryId}`;
+        }
+      } catch (err) {
+        metaEl.textContent = `Eintrag ID: ${entryId}`;
+      }
+    }
+
+    // -----------------------------
+    // Listing: Firestore-Metadaten bevorzugen
+    // -----------------------------
+    async function listAttachments(){
+      attachmentsList.innerHTML = 'Lade…';
+      try {
+        console.log('USE_CLOUDINARY:', USE_CLOUDINARY);
+        console.log('kbStorage.listAttachmentsForEntry exists:', !!(window.kbStorage && typeof kbStorage.listAttachmentsForEntry === 'function'));
+
+        // 1) Bevorzugt Firestore-Metadaten (wichtig bei Cloudinary)
+        if (window.kbStorage && typeof kbStorage.listAttachmentsForEntry === 'function') {
+          const list = await kbStorage.listAttachmentsForEntry(entryId);
+          renderAttachments(list || []);
+          return;
+        }
+
+        // 2) Fallback: Firebase Storage listing (nur wenn Dateien in Firebase Storage liegen)
+        const storage = firebase.storage();
+        const ref = storage.ref().child(`attachments/${entryId}`);
+        const res = await ref.listAll();
+        const items = await Promise.all(res.items.map(async itemRef => {
+          const url = await itemRef.getDownloadURL();
+          return { name: itemRef.name, url };
+        }));
+        renderAttachments(items);
+      } catch (err) {
+        console.error('listAttachments error', err);
+        attachmentsList.innerHTML = '<div class="small">Fehler beim Laden der Anlagen. Konsole prüfen.</div>';
+      }
+    }
+
+    function renderAttachments(items){
+      if(!items || items.length === 0){ attachmentsList.innerHTML = '<div class="small">Keine Anlagen</div>'; return; }
+      attachmentsList.innerHTML = '';
+      items.forEach(it => {
+        const row = document.createElement('div'); row.className = 'file-row';
+        const left = document.createElement('div'); left.style.flex='1';
+        const filename = it.name || (it.url || '').split('/').pop() || 'Datei';
+        const isImage = /\.(jpe?g|png|gif|webp|bmp)$/i.test(filename) || /\.(jpe?g|png|gif|webp|bmp)$/i.test(it.url || '');
+        if(isImage){
+          left.innerHTML = `<img src="${it.url}" class="preview" alt="${escapeHtml(filename)}">`;
+        } else {
+          left.innerHTML = `<div class="meta-line">${escapeHtml(filename)}</div>`;
+        }
+        const right = document.createElement('div');
+        const a = document.createElement('a'); a.href = it.url || '#'; a.target='_blank'; a.className='file-link'; a.textContent = 'Öffnen';
+        const del = document.createElement('button'); del.textContent = 'Löschen'; del.className='muted';
+        del.addEventListener('click', async ()=>{
+          if(!confirm('Datei wirklich löschen?')) return;
+          del.disabled = true;
+          try {
+            if (window.kbStorage && typeof kbStorage.deleteAttachment === 'function') {
+              await kbStorage.deleteAttachment(entryId, it.name || filename);
+            } else {
+              // Fallback: versuche Firebase Storage zu löschen (funktioniert nur für Firebase-Uploads)
+              const storage = firebase.storage();
+              const ref = storage.ref().child(`attachments/${entryId}/${it.name || filename}`);
+              await ref.delete();
+            }
+            await listAttachments();
+          } catch(err){
+            console.error(err);
+            alert('Fehler beim Löschen. Konsole prüfen.');
+            del.disabled = false;
+          }
+        });
+        right.appendChild(a); right.appendChild(del);
+        row.appendChild(left); row.appendChild(right);
+        attachmentsList.appendChild(row);
+      });
+    }
+
+    // -----------------------------
+    // Upload-Funktion: Cloudinary (raw/image) oder Firebase Storage
+    // -----------------------------
+    async function uploadFile(file, onProgress){
+      if (USE_CLOUDINARY) {
+        // Bestimme resource_type: 'raw' für PDFs/andere non-image, sonst 'image'
+        const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+        const resourceType = isPdf ? 'raw' : 'image';
+        const url = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CONFIG.cloudName}/${resourceType}/upload`;
+
+        const fd = new FormData();
+        fd.append('file', file);
+        fd.append('upload_preset', CLOUDINARY_CONFIG.uploadPreset);
+        fd.append('folder', `attachments/${entryId}`);
+
+        return new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('POST', url);
+          xhr.upload.onprogress = (e) => { if (e.lengthComputable && onProgress) onProgress(Math.round(e.loaded / e.total * 100)); };
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              try {
+                const res = JSON.parse(xhr.responseText);
+                // res.secure_url ist die korrekte öffentliche URL (für raw oder image)
+                const name = res.public_id ? (res.public_id + (res.format ? '.' + res.format : '')) : file.name;
+                const publicUrl = res.secure_url || res.url || '';
+                resolve({ name, url: publicUrl, rawResponse: res });
+              } catch (e) {
+                reject(new Error('Cloudinary: Ungültige Antwort'));
+              }
+            } else reject(new Error('Cloudinary Upload fehlgeschlagen: ' + xhr.status));
+          };
+          xhr.onerror = () => reject(new Error('Cloudinary Upload Fehler'));
+          xhr.send(fd);
+        });
+      } else {
+        // Firebase Storage upload to attachments/{entryId}/{filename}
+        const storage = firebase.storage();
+        const filename = `${Date.now()}_${file.name.replace(/\s+/g,'_')}`;
+        const ref = storage.ref().child(`attachments/${entryId}/${filename}`);
+        const task = ref.put(file);
+        return new Promise((resolve, reject) => {
+          task.on('state_changed', snapshot => {
+            const pct = Math.round(snapshot.bytesTransferred / snapshot.totalBytes * 100);
+            if (onProgress) onProgress(pct);
+          }, err => reject(err), async () => {
+            try {
+              const url = await ref.getDownloadURL();
+              resolve({ name: filename, url });
+            } catch (e) {
+              // Falls getDownloadURL fehlschlägt, trotzdem den Namen zurückgeben
+              resolve({ name: filename, url: '' });
+            }
+          });
+        });
+      }
+    }
+
+    function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c]); }
+
+    // -----------------------------
+    // Upload-Handler: Dateien hochladen, öffentliche URL sicherstellen, Metadaten speichern
+    // -----------------------------
+    uploadBtn.addEventListener('click', async ()=>{
+      const files = [];
+      if (galleryInput.files && galleryInput.files.length) for(const f of galleryInput.files) files.push(f);
+      if (cameraInput.files && cameraInput.files.length) for(const f of cameraInput.files) files.push(f);
+      if (pdfInput.files && pdfInput.files.length) for(const f of pdfInput.files) files.push(f);
+      if (files.length === 0) return alert('Keine Dateien ausgewählt.');
+      uploadBtn.disabled = true;
+      setStatus(`Starte Upload von ${files.length} Datei(en)...`);
+      statusEl.innerHTML = '';
+
+      for (let i=0;i<files.length;i++){
+        const f = files[i];
+        const row = document.createElement('div'); row.className='file-row';
+        row.innerHTML = `<div class="small">${escapeHtml(f.name)}</div><div class="progress"><i style="width:0%"></i></div>`;
+        statusEl.appendChild(row);
+        const progBar = row.querySelector('.progress > i');
+
+        try {
+          // 1) Upload (Cloudinary oder Firebase Storage)
+          const res = await uploadFile(f, pct => { progBar.style.width = pct + '%'; });
+
+          // 2) Bestimme die öffentliche URL sicher
+          let publicUrl = res.url || '';
+          // Falls Firebase-Upload zurückgab nur Pfad oder kein URL, versuche getDownloadURL
+          if (!publicUrl && res.name && !USE_CLOUDINARY) {
+            try {
+              publicUrl = await firebase.storage().ref(`attachments/${entryId}/${res.name}`).getDownloadURL();
+            } catch (e) {
+              console.warn('getDownloadURL failed for', res.name, e);
+            }
+          }
+
+          // 3) Speichere Metadaten in Firestore und warte auf Bestätigung
+          if (window.kbStorage && typeof kbStorage.addAttachmentMeta === 'function') {
+            const metaRes = await kbStorage.addAttachmentMeta(entryId, {
+              name: res.name,
+              url: publicUrl,
+              uploadedAt: Date.now(),
+              meta: { size: f.size, type: f.type }
+            });
+            if (!metaRes || !metaRes.ok) {
+              console.warn('addAttachmentMeta returned not-ok', metaRes);
+            }
+          } else {
+            console.info('kbStorage.addAttachmentMeta nicht vorhanden; Metadaten nicht gespeichert.');
+          }
+        } catch(err){
+          console.error('Upload error', err);
+          progBar.style.background = '#900';
+        }
+      }
+
+      uploadBtn.disabled = false;
+      setStatus('Upload abgeschlossen.');
+      galleryInput.value = ''; cameraInput.value = ''; pdfInput.value = '';
+      // kurz warten, dann Liste neu laden
+      setTimeout(() => listAttachments().catch(console.error), 300);
+    });
+
+    refreshBtn.addEventListener('click', listAttachments);
+
+    // initial
+    loadEntryMeta();
+    listAttachments();
+  })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,59 @@
+<!-- entries-filter.html -->
+<div style="display:flex;gap:8px;align-items:center">
+  <label style="font-size:0.95rem;color:#444">Lehrer filtern:</label>
+  <select id="filterTeacherSelect" style="min-width:200px;padding:6px;border-radius:6px;border:1px solid #e6eef8">
+    <option value="all">— Alle Lehrer —</option>
+  </select>
+  <button id="filterResetBtn" style="padding:6px 10px;border-radius:6px;background:#0b6cff;color:#fff;border:none">Reset</button>
+</div>
+
+<script>
+  (async function(){
+    // Erwartet: parent stellt window.kbStorage zur Verfügung (admin.html lädt diese Datei)
+    const LS_KEY = 'admin_entries_teacher_filter';
+    function $(id){ return document.getElementById(id); }
+
+    // Fülle Select mit Lehrern aus meta (via parent.kbStorage)
+    async function populateTeachers(){
+      try {
+        const meta = await parent.kbStorage.loadMeta();
+        const teachers = meta && meta.teachers ? meta.teachers : [];
+        const sel = $('filterTeacherSelect');
+        // entferne alte Optionen außer "all"
+        Array.from(sel.options).slice(1).forEach(o => o.remove());
+        teachers.forEach(t => {
+          const opt = document.createElement('option');
+          opt.value = t;
+          opt.textContent = t;
+          sel.appendChild(opt);
+        });
+        // setze gespeicherte Auswahl
+        const saved = localStorage.getItem(LS_KEY) || 'all';
+        sel.value = saved;
+      } catch (err) {
+        console.error('populateTeachers error', err);
+      }
+    }
+
+    // Event handlers
+    $('filterTeacherSelect').addEventListener('change', (ev)=>{
+      const v = ev.target.value || 'all';
+      localStorage.setItem(LS_KEY, v);
+      // signal an parent: ruft renderAdminEntries neu auf
+      try { parent.renderAdminEntries && parent.renderAdminEntries(); } catch(e){ console.warn(e); }
+    });
+
+    $('filterResetBtn').addEventListener('click', ()=>{
+      $('filterTeacherSelect').value = 'all';
+      localStorage.setItem(LS_KEY, 'all');
+      try { parent.renderAdminEntries && parent.renderAdminEntries(); } catch(e){ console.warn(e); }
+    });
+
+    // initial populate
+    await populateTeachers();
+
+    // Beobachte Änderungen in parent.meta (falls Admin Fächer/Lehrer ändert, parent ruft populateTeachers() erneut)
+    // Wir bieten eine einfache API: parent kann diese Funktion aufrufen, z.B. parent.updateFilterWidget()
+    window.updateFilterWidget = populateTeachers;
+  })();
+</script>

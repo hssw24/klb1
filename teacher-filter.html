@@ -1,0 +1,85 @@
+<!-- teacher-filter.html -->
+<div style="display:flex;flex-direction:column;gap:6px">
+  <div style="display:flex;align-items:center;gap:8px">
+    <strong id="currentTeacherLabel">Lehrer:</strong>
+    <select id="teacherSelectFilter" style="min-width:200px;padding:6px;border-radius:6px;border:1px solid #e6eef8"></select>
+    <label style="display:flex;align-items:center;gap:6px;margin-left:8px">
+      <input id="onlyOwnCheckbox" type="checkbox"> <span style="font-size:0.95rem;color:#444">Nur eigene Stunden</span>
+    </label>
+  </div>
+  <div style="display:flex;gap:8px">
+    <button id="filterSaveBtn" style="padding:6px 10px;border-radius:6px;background:#0b6cff;color:#fff;border:none">Speichern</button>
+    <button id="filterResetBtn" style="padding:6px 10px;border-radius:6px;background:#888;color:#fff;border:none">Reset</button>
+  </div>
+</div>
+
+<script>
+(async function(){
+  const LS_SEL = 'teacher_filter_selected';
+  const LS_ONLY = 'teacher_filter_only';
+  function $id(id){ return document.getElementById(id); }
+
+  // robustes Zugriffsmuster auf kbStorage (lokal oder parent)
+  const storageApi = (typeof window.kbStorage !== 'undefined') ? window.kbStorage
+                   : (typeof parent !== 'undefined' && parent.kbStorage) ? parent.kbStorage
+                   : null;
+
+  async function populate(){
+    try {
+      if (!storageApi) {
+        console.error('kbStorage nicht verfügbar');
+        $id('teacherSelectFilter').innerHTML = '<option value="">-- keine Daten --</option>';
+        return;
+      }
+      const meta = await storageApi.loadMeta();
+      const teachers = meta && meta.teachers ? meta.teachers : [];
+      const sel = $id('teacherSelectFilter');
+      sel.innerHTML = '';
+      const emptyOpt = document.createElement('option'); emptyOpt.value=''; emptyOpt.textContent='-- Lehrer wählen --'; sel.appendChild(emptyOpt);
+      teachers.forEach(t => {
+        const o = document.createElement('option'); o.value = t; o.textContent = t; sel.appendChild(o);
+      });
+      const saved = localStorage.getItem(LS_SEL) || '';
+      const only = localStorage.getItem(LS_ONLY) === '1';
+      if (saved && Array.from(sel.options).some(o=>o.value===saved)) sel.value = saved;
+      $id('onlyOwnCheckbox').checked = only;
+      updateLabel();
+    } catch(e){
+      console.error('populate filter', e);
+    }
+  }
+
+  function updateLabel(){
+    const sel = $id('teacherSelectFilter');
+    const label = $id('currentTeacherLabel');
+    label.textContent = 'Lehrer: ' + (sel.value || '—');
+  }
+
+  $id('teacherSelectFilter').addEventListener('change', ()=>{
+    updateLabel();
+  });
+
+  $id('filterSaveBtn').addEventListener('click', ()=>{
+    const sel = $id('teacherSelectFilter').value || '';
+    const only = $id('onlyOwnCheckbox').checked ? '1' : '0';
+    localStorage.setItem(LS_SEL, sel);
+    localStorage.setItem(LS_ONLY, only);
+    try { if (parent && parent.applyTeacherFilter) parent.applyTeacherFilter(); } catch(e){ /* ignore */ }
+    $id('filterSaveBtn').textContent = 'Gespeichert';
+    setTimeout(()=> $id('filterSaveBtn').textContent = 'Speichern', 900);
+  });
+
+  $id('filterResetBtn').addEventListener('click', ()=>{
+    $id('teacherSelectFilter').value = '';
+    $id('onlyOwnCheckbox').checked = false;
+    localStorage.removeItem(LS_SEL);
+    localStorage.removeItem(LS_ONLY);
+    updateLabel();
+    try { if (parent && parent.applyTeacherFilter) parent.applyTeacherFilter(); } catch(e){ /* ignore */ }
+  });
+
+  window.updateTeacherFilterWidget = populate;
+
+  await populate();
+})();
+</script>

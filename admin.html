@@ -1,0 +1,408 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Klassenbuch — Admin</title>
+  <style>
+    :root{--accent:#0070f3}
+    body{font-family:Arial,Helvetica,sans-serif;margin:0;padding:12px;background:#f4f6f8;color:#111}
+    header{display:flex;justify-content:space-between;align-items:center}
+    h2{margin:0;font-size:1.05rem}
+    .card{background:#fff;padding:10px;margin:10px 0;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+    input,select,textarea,button{width:100%;box-sizing:border-box}
+    input,select,textarea{padding:8px;margin-top:6px;border-radius:6px;border:1px solid #e6eef8}
+    button{padding:8px;margin-top:8px;border:none;border-radius:8px;background:var(--accent);color:#fff;font-weight:600}
+    .row{display:flex;gap:8px}
+    .row> *{flex:1}
+    .small{font-size:0.9rem;color:#444}
+    table{border-collapse:collapse;width:100%}
+    th,td{border:1px solid #e6eef8;padding:6px;text-align:center}
+    th{background:#f7fbff}
+    .muted{background:#888}
+    .list-item{display:flex;justify-content:space-between;align-items:center;padding:8px;border-bottom:1px solid #eef4ff}
+    .list-item button{width:auto;padding:6px;margin-left:6px}
+    .actions-inline{display:flex;gap:6px;align-items:center}
+    @media (max-width:600px){ .row{flex-direction:column} table{font-size:12px} }
+  </style>
+</head>
+<body>
+  <header>
+    <h2>Klassenbuch — Admin</h2>
+    <a class="small" href="index.html">Zur Lehrer‑Ansicht</a>
+  </header>
+
+  <div class="card">
+    <div class="small">Fächer (einfacher String pro Zeile)</div>
+    <textarea id="subjectsArea" rows="3" placeholder="Mathematik&#10;Deutsch&#10;Englisch"></textarea>
+    <button id="saveSubjectsBtn">Fächer speichern</button>
+  </div>
+
+  <div class="card">
+    <div class="small">Lehrer (ein Name pro Zeile)</div>
+    <textarea id="teachersArea" rows="2" placeholder="Frau Müller&#10;Herr Schmidt"></textarea>
+    <button id="saveTeachersBtn">Lehrer speichern</button>
+  </div>
+
+  <div class="card">
+    <div class="small">Kurse</div>
+    <div id="coursesList"></div>
+    <hr>
+    <div class="small">Neuen Kurs anlegen</div>
+    <input id="newCourseName" placeholder="Kursbezeichnung (z. B. RSA261)">
+    <textarea id="newCourseStudents" rows="3" placeholder="Schüler, ein Name pro Zeile"></textarea>
+    <button id="createCourseBtn">Kurs anlegen</button>
+  </div>
+
+  <div class="card" id="courseEditorCard" style="display:none">
+    <h3 id="editorTitle">Kurs bearbeiten</h3>
+    <div class="small">Kurs ID (nicht editierbar)</div>
+    <input id="editCourseId" disabled>
+    <div class="small">Kursname</div>
+    <input id="editCourseName">
+    <div class="small">Schüler (ein Name pro Zeile)</div>
+    <textarea id="editCourseStudents" rows="4"></textarea>
+
+    <div class="small" style="margin-top:8px">Stundenplan (Mo–Fr, 1–6)</div>
+    <div id="timetableContainer" class="card" style="padding:8px"></div>
+
+    <div style="display:flex;gap:8px">
+      <button id="saveCourseBtn">Speichern</button>
+      <button id="deleteCourseBtn" class="muted">Löschen</button>
+      <button id="closeEditorBtn" class="muted">Schließen</button>
+    </div>
+  </div>
+
+  <!-- Filter-Widget Container (wird entries-filter.html laden) -->
+  <div class="card">
+    <div class="small">Filter</div>
+    <div id="entriesFilterContainer">Lade Filter…</div>
+  </div>
+
+  <!-- Neu: Admin Panel für Einträge -->
+  <div class="card" id="entriesAdminCard">
+    <div class="small">Stunden / Einträge</div>
+    <div id="entriesList">Lade Einträge…</div>
+  </div>
+
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+  <script>
+    // Firebase-Konfiguration hier einfügen
+    const firebaseConfig = {
+      apiKey: "AIzaSyBdflIYtuxvtzwnJmOIfVwNByR9E7uAnwU",
+      authDomain: "klbuch-57460.firebaseapp.com",
+      projectId: "klbuch-57460"
+    };
+    firebase.initializeApp(firebaseConfig);
+  </script>
+  <script src="storage.firebase.js"></script>
+
+  <script>
+    const kb = window.kbStorage;
+    if(!kb){ document.body.innerHTML = '<div style="padding:20px;color:#900">Fehler: storage.firebase.js fehlt.</div>'; throw new Error('kbStorage missing'); }
+
+    const ADMIN_FILTER_LS = 'admin_entries_teacher_filter';
+
+    const subjectsArea = document.getElementById('subjectsArea');
+    const teachersArea = document.getElementById('teachersArea');
+    const saveSubjectsBtn = document.getElementById('saveSubjectsBtn');
+    const saveTeachersBtn = document.getElementById('saveTeachersBtn');
+    const coursesList = document.getElementById('coursesList');
+    const createCourseBtn = document.getElementById('createCourseBtn');
+    const newCourseName = document.getElementById('newCourseName');
+    const newCourseStudents = document.getElementById('newCourseStudents');
+
+    const courseEditorCard = document.getElementById('courseEditorCard');
+    const editCourseId = document.getElementById('editCourseId');
+    const editCourseName = document.getElementById('editCourseName');
+    const editCourseStudents = document.getElementById('editCourseStudents');
+    const timetableContainer = document.getElementById('timetableContainer');
+    const saveCourseBtn = document.getElementById('saveCourseBtn');
+    const deleteCourseBtn = document.getElementById('deleteCourseBtn');
+    const closeEditorBtn = document.getElementById('closeEditorBtn');
+    const editorTitle = document.getElementById('editorTitle');
+
+    const entriesListContainer = document.getElementById('entriesList');
+    const entriesFilterContainer = document.getElementById('entriesFilterContainer');
+
+    let currentMeta = null;
+    let currentEditingCourseIndex = -1;
+
+    function subjectsToText(arr){ return (arr||[]).join('\n'); }
+    function textToSubjects(s){ return s.split('\n').map(x=>x.trim()).filter(x=>x); }
+
+    function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c]); }
+    function formatAbsences(abs){
+      if(!abs || abs.length === 0) return '-';
+      return abs.map(a=>{
+        if(a.type === 'absent_whole') return `${a.student}: fehlt ganz`;
+        if(a.type === 'absent_until') return `${a.student}: fehlt bis ${a.to || '-'}`;
+        if(a.type === 'absent_from') return `${a.student}: fehlt ab ${a.from || '-'}`;
+        if(a.type === 'absent_fromto') return `${a.student}: fehlt ${a.from || '-'}–${a.to || '-'}`;
+        return `${a.student}: ${a.type}`;
+      }).join('; ');
+    }
+
+    async function loadAll(){
+      currentMeta = await kb.loadMeta();
+      if(!currentMeta) currentMeta = { courses:[], subjects:[], teachers:[] };
+      await kb.ensureDefaults();
+      currentMeta = await kb.loadMeta();
+
+      subjectsArea.value = subjectsToText(currentMeta.subjects || []);
+      teachersArea.value = subjectsToText(currentMeta.teachers || []);
+      renderCoursesList();
+    }
+
+    function renderCoursesList(){
+      coursesList.innerHTML = '';
+      (currentMeta.courses || []).forEach((c, idx)=>{
+        const div = document.createElement('div'); div.className = 'list-item';
+        const left = document.createElement('div'); left.innerHTML = `<strong>${escapeHtml(c.name)}</strong><div class="small">${escapeHtml(c.id)}</div>`;
+        const right = document.createElement('div');
+        const editBtn = document.createElement('button'); editBtn.textContent = 'Bearbeiten';
+        editBtn.addEventListener('click', ()=> openEditor(idx));
+        right.appendChild(editBtn);
+        div.appendChild(left); div.appendChild(right);
+        coursesList.appendChild(div);
+      });
+    }
+
+    saveSubjectsBtn.addEventListener('click', async ()=>{
+      const arr = textToSubjects(subjectsArea.value);
+      currentMeta.subjects = arr;
+      const res = await kb.saveMeta(currentMeta);
+      if(!res.ok) return alert('Fehler beim Speichern: ' + (res.reason||''));
+      alert('Fächer gespeichert');
+      await loadAll();
+      await loadEntriesFilterWidget();
+      await renderAdminEntries();
+    });
+
+    saveTeachersBtn.addEventListener('click', async ()=>{
+      const arr = textToSubjects(teachersArea.value);
+      currentMeta.teachers = arr;
+      const res = await kb.saveMeta(currentMeta);
+      if(!res.ok) return alert('Fehler beim Speichern: ' + (res.reason||''));
+      alert('Lehrer gespeichert');
+      await loadAll();
+      await loadEntriesFilterWidget();
+      await renderAdminEntries();
+    });
+
+    createCourseBtn.addEventListener('click', async ()=>{
+      const name = newCourseName.value.trim();
+      if(!name) return alert('Bitte Kursname eingeben');
+      const students = newCourseStudents.value.split('\n').map(s=>s.trim()).filter(s=>s);
+      const res = await kb.addCourse(name, students);
+      if(!res.ok) return alert('Fehler: ' + (res.reason||''));
+      newCourseName.value = ''; newCourseStudents.value = '';
+      await loadAll();
+      await loadEntriesFilterWidget();
+      await renderAdminEntries();
+    });
+
+    // Timetable editor renderer
+    function renderTimetableEditor(container, timetable, subjects){
+      const days = ['mon','tue','wed','thu','fri'];
+      container.innerHTML = '';
+      const table = document.createElement('table');
+      const thead = document.createElement('thead');
+      const headRow = document.createElement('tr');
+      headRow.appendChild(document.createElement('th'));
+      for(let h=1; h<=6; h++){ const th = document.createElement('th'); th.textContent = h; headRow.appendChild(th); }
+      thead.appendChild(headRow); table.appendChild(thead);
+
+      const tbody = document.createElement('tbody');
+      days.forEach(day=>{
+        const tr = document.createElement('tr');
+        const th = document.createElement('th'); th.textContent = day.toUpperCase(); tr.appendChild(th);
+        for(let h=0; h<6; h++){
+          const td = document.createElement('td');
+          const sel = document.createElement('select');
+          sel.dataset.day = day; sel.dataset.hour = h+1;
+          const emptyOpt = document.createElement('option'); emptyOpt.value=''; emptyOpt.textContent='--';
+          sel.appendChild(emptyOpt);
+          (subjects||[]).forEach(s => { const o = document.createElement('option'); o.value = s; o.textContent = s; sel.appendChild(o); });
+          sel.value = (timetable && timetable[day] && timetable[day][h]) || '';
+          td.appendChild(sel); tr.appendChild(td);
+        }
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      container.appendChild(table);
+    }
+
+    function readTimetableFromEditor(container){
+      const days = ['mon','tue','wed','thu','fri'];
+      const tt = {};
+      days.forEach(day=>{
+        tt[day] = [];
+        for(let h=1; h<=6; h++){
+          const sel = container.querySelector(`select[data-day="${day}"][data-hour="${h}"]`);
+          tt[day].push(sel ? (sel.value || '') : '');
+        }
+      });
+      return tt;
+    }
+
+    function openEditor(idx){
+      currentEditingCourseIndex = idx;
+      const course = currentMeta.courses[idx];
+      editCourseId.value = course.id;
+      editCourseName.value = course.name || '';
+      editCourseStudents.value = (course.students || []).join('\n');
+      renderTimetableEditor(timetableContainer, course.timetable || {}, currentMeta.subjects || []);
+      courseEditorCard.style.display = 'block';
+      editorTitle.textContent = 'Kurs bearbeiten: ' + course.name;
+    }
+
+    closeEditorBtn.addEventListener('click', ()=> {
+      courseEditorCard.style.display = 'none';
+      currentEditingCourseIndex = -1;
+    });
+
+    saveCourseBtn.addEventListener('click', async ()=>{
+      if (currentEditingCourseIndex < 0) return;
+      const course = currentMeta.courses[currentEditingCourseIndex];
+      course.name = editCourseName.value.trim() || course.name;
+      course.students = editCourseStudents.value.split('\n').map(s=>s.trim()).filter(s=>s);
+      course.timetable = readTimetableFromEditor(timetableContainer);
+      const res = await kb.saveMeta(currentMeta);
+      if(!res.ok) return alert('Fehler beim Speichern: ' + (res.reason||''));
+      alert('Kurs gespeichert');
+      await loadAll();
+      await loadEntriesFilterWidget();
+      await renderAdminEntries();
+      courseEditorCard.style.display = 'none';
+    });
+
+    deleteCourseBtn.addEventListener('click', async ()=>{
+      if (currentEditingCourseIndex < 0) return;
+      const course = currentMeta.courses[currentEditingCourseIndex];
+      if(!confirm('Kurs "'+course.name+'" wirklich löschen?')) return;
+      const res = await kb.deleteCourse(course.id);
+      if(!res.ok) return alert('Fehler: ' + (res.reason||''));
+      await loadAll();
+      await loadEntriesFilterWidget();
+      await renderAdminEntries();
+      courseEditorCard.style.display = 'none';
+    });
+    // --- Admin: Einträge laden and rendern (mit Lehrer-Filter) ---
+    async function renderAdminEntries() {
+      const container = entriesListContainer;
+      container.innerHTML = 'Lade Einträge…';
+      try {
+        const entries = await kb.loadEntries();
+        if (!entries || entries.length === 0) {
+          container.innerHTML = '<div class="small">Keine Einträge vorhanden</div>';
+          return;
+        }
+        const sorted = entries.slice().sort((a,b)=>{
+          if (a.date === b.date) return (b.hour||0) - (a.hour||0);
+          return (b.date || '').localeCompare(a.date || '');
+        });
+
+        // Filter aus localStorage lesen
+        const teacherFilter = localStorage.getItem(ADMIN_FILTER_LS) || 'all';
+        const filtered = (teacherFilter && teacherFilter !== 'all') ? sorted.filter(e => (e.teacher || '') === teacherFilter) : sorted;
+
+        container.innerHTML = '';
+        filtered.forEach(e => {
+          const div = document.createElement('div');
+          div.className = 'list-item';
+          const left = document.createElement('div');
+          left.style.flex = '1';
+          left.innerHTML = `<strong>${escapeHtml(e.date)} • Stunde ${escapeHtml(e.hour)} • ${escapeHtml(e.course)}</strong>
+                            <div class="small">${escapeHtml(e.subject)} • ${escapeHtml(e.teacher || '-')}</div>
+                            <div class="small">${escapeHtml(e.content || '')}</div>
+                            <div class="small">Fehlzeiten: ${escapeHtml(formatAbsences(e.absences||[]))}</div>`;
+          const right = document.createElement('div');
+          right.className = 'actions-inline';
+          const lockBtn = document.createElement('button');
+          lockBtn.textContent = e.locked ? 'Entsperren' : 'Sperren';
+          lockBtn.addEventListener('click', async () => {
+            lockBtn.disabled = true;
+            const res = await kb.toggleLockEntry(e.id);
+            lockBtn.disabled = false;
+            if (!res.ok) return alert('Fehler beim (Ent)Sperren: ' + (res.reason||''));
+            await renderAdminEntries();
+          });
+          const delBtn = document.createElement('button');
+          delBtn.textContent = 'Löschen';
+          delBtn.className = 'muted';
+          delBtn.addEventListener('click', async () => {
+            if (!confirm('Eintrag wirklich löschen? Diese Aktion ist endgültig.')) return;
+            delBtn.disabled = true;
+            const res = await kb.deleteEntryById(e.id);
+            delBtn.disabled = false;
+            if (!res.ok) return alert('Fehler beim Löschen: ' + (res.reason||''));
+            await renderAdminEntries();
+          });
+          right.appendChild(lockBtn);
+          right.appendChild(delBtn);
+          div.appendChild(left);
+          div.appendChild(right);
+          container.appendChild(div);
+        });
+      } catch (err) {
+        console.error('renderAdminEntries error', err);
+        container.innerHTML = '<div class="small">Fehler beim Laden der Einträge. Konsole prüfen.</div>';
+      }
+    }
+
+    // --- Lade das externe Filter-Widget (entries-filter.html) und führe enthaltene Scripts aus ---
+    async function loadEntriesFilterWidget(){
+      const container = entriesFilterContainer;
+      container.textContent = 'Lade Filter…';
+      try {
+        const resp = await fetch('entries-filter.html');
+        if (!resp.ok) { container.textContent = 'Filter konnte nicht geladen werden'; return; }
+        const html = await resp.text();
+
+        // Trenne script-tags, setze HTML ohne scripts und führe Scripts separat aus
+        const div = document.createElement('div');
+        div.innerHTML = html;
+
+        // Extrahiere und entferne script-Elemente
+        const scripts = Array.from(div.querySelectorAll('script'));
+        scripts.forEach(s => s.remove());
+
+        // Setze den HTML-Teil (ohne scripts)
+        container.innerHTML = div.innerHTML;
+
+        // Führe die Scripts nacheinander aus (im globalen Kontext)
+        for (const s of scripts) {
+          const code = s.textContent || s.innerText || '';
+          if (!code.trim()) continue;
+          const scriptEl = document.createElement('script');
+          scriptEl.type = 'text/javascript';
+          scriptEl.text = code;
+          container.appendChild(scriptEl);
+        }
+
+        // Falls das Widget expose updateFilterWidget, rufe es an, damit Lehrer-Liste aktuell ist
+        if (typeof window.updateFilterWidget === 'function') {
+          try { window.updateFilterWidget(); } catch(e){ /* ignore */ }
+        }
+      } catch (err) {
+        console.error('loadEntriesFilterWidget error', err);
+        container.textContent = 'Fehler beim Laden des Filters';
+      }
+    }
+
+    // Init
+    (async function init(){
+      try {
+        await kb.ensureDefaults();
+        await loadAll();
+        await loadEntriesFilterWidget();
+        await renderAdminEntries();
+      } catch (err) {
+        console.error('Init error', err);
+      }
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Klassenbuch — Einstellungen</title>
+  <style>
+    body{font-family:Arial,Helvetica,sans-serif;padding:12px;background:#f4f6f8;color:#111}
+    header{display:flex;justify-content:space-between;align-items:center;max-width:980px;margin:0 auto}
+    h2{margin:0}
+    .card{background:#fff;padding:12px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.06);max-width:980px;margin:12px auto}
+    .small{font-size:0.95rem;color:#444;margin-bottom:8px}
+    button{padding:8px 12px;border-radius:6px;border:none;background:#0b6cff;color:#fff;cursor:pointer}
+    .muted{background:#888}
+  </style>
+</head>
+<body>
+  <header>
+    <h2>Einstellungen</h2>
+    <div><a href="index.html" style="text-decoration:none;color:inherit">Zurück</a></div>
+  </header>
+
+  <div class="card">
+    <div class="small">Lehrer Filter</div>
+    <div id="teacherFilterContainer">Lade Filter…</div>
+  </div>
+
+  <!-- Firebase + storage API damit das Widget kbStorage nutzen kann -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+  <script>
+    // Firebase-Konfiguration: bitte hier deine Werte eintragen
+    const firebaseConfig = {
+      apiKey: "AIzaSyBdflIYtuxvtzwnJmOIfVwNByR9E7uAnwU",
+      authDomain: "klbuch-57460.firebaseapp.com",
+      projectId: "klbuch-57460"
+    };
+    firebase.initializeApp(firebaseConfig);
+  </script>
+  <script src="storage.firebase.js"></script>
+
+  <script>
+    // Lädt teacher-filter.html inline und führt enthaltene Skripte aus.
+    (async function(){
+      const container = document.getElementById('teacherFilterContainer');
+      try {
+        const resp = await fetch('teacher-filter.html');
+        if (!resp.ok) { container.textContent = 'Filter konnte nicht geladen werden'; return; }
+        const html = await resp.text();
+        const wrapper = document.createElement('div');
+        wrapper.innerHTML = html;
+        const scripts = Array.from(wrapper.querySelectorAll('script'));
+        scripts.forEach(s => s.remove());
+        container.innerHTML = wrapper.innerHTML;
+        for (const s of scripts) {
+          const code = s.textContent || s.innerText || '';
+          if (!code.trim()) continue;
+          const sc = document.createElement('script');
+          sc.type = 'text/javascript';
+          sc.text = code;
+          container.appendChild(sc);
+        }
+        if (typeof window.updateTeacherFilterWidget === 'function') {
+          try { window.updateTeacherFilterWidget(); } catch(e){ /* ignore */ }
+        }
+      } catch (err) {
+        console.error('load teacher-filter error', err);
+        container.textContent = 'Fehler beim Laden des Filters';
+      }
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,490 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Klassenbuch — Lehrer (Firebase)</title>
+  <style>
+    :root{--accent:#0070f3}
+    body{font-family:Arial,Helvetica,sans-serif;margin:0;padding:12px;background:#f4f6f8;color:#111}
+    header{display:flex;justify-content:space-between;align-items:center}
+    h2{margin:0;font-size:1.05rem}
+    .card{background:#fff;padding:10px;margin:10px 0;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+    input,select,textarea,button{width:100%;box-sizing:border-box}
+    input,select,textarea{padding:10px;margin-top:8px;border-radius:8px;border:1px solid #e6eef8}
+    button{padding:10px;margin-top:10px;border:none;border-radius:8px;background:var(--accent);color:#fff;font-weight:600}
+    .row{display:flex;gap:8px}
+    .row> *{flex:1}
+    .small{font-size:0.9rem;color:#444}
+    .student-row{display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap}
+    .student-row label{flex:1;min-width:120px}
+    .student-row select{flex:0 0 160px}
+    .student-row input[type="time"]{flex:0 0 120px}
+    .actions{display:flex;gap:8px}
+    .muted{background:#888}
+    .inline-btn{width:auto;padding:8px 12px;display:inline-block}
+    .timetable-note{display:inline-block;margin-left:8px;font-size:0.85rem;color:#0b6cff}
+    .icon-btn{font-size:18px;cursor:pointer;padding:6px}
+    .entry-actions{display:flex;gap:8px;flex-wrap:wrap}
+    @media (orientation:landscape){ body{padding:18px} }
+    pre.debug{white-space:pre-wrap;max-height:200px;overflow:auto;background:#fff;padding:8px;border-radius:8px;border:1px solid #eef4ff}
+  </style>
+</head>
+<body>
+  <header>
+    <h2>Klassenbuch — Lehrer</h2>
+    <div style="display:flex;gap:12px;align-items:center">
+      <a class="small" href="admin.html">Admin</a>
+      <a id="openSettings" class="icon-btn" title="Einstellungen" href="settings.html" target="_blank">⚙️</a>
+    </div>
+  </header>
+
+  <!-- Firebase (Compat) CDN - bitte mit deiner Config ergänzen -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
+  <script>
+    // Firebase-Konfiguration hier einfügen (aus Firebase-Konsole)
+    const firebaseConfig = {
+      apiKey: "AIzaSyBdflIYtuxvtzwnJmOIfVwNByR9E7uAnwU",
+      authDomain: "klbuch-57460.firebaseapp.com",
+      projectId: "klbuch-57460"
+      // optional: storageBucket, messagingSenderId, appId
+    };
+    firebase.initializeApp(firebaseConfig);
+  </script>
+
+  <!-- Firestore-basierte Speicher-API (storage.firebase.js) -->
+  <script src="storage.firebase.js"></script>
+
+  <div class="card" id="entryCard">
+    <div class="small">Kurs</div>
+    <select id="courseSelect"></select>
+
+    <div class="small">Fach</div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <select id="subjectSelect" style="flex:1"></select>
+      <span id="timetableNote" class="timetable-note" style="display:none">Aus Stundenplan übernommen</span>
+    </div>
+
+    <div class="small">Lehrer</div>
+    <select id="teacherSelect"></select>
+
+    <div class="row" style="align-items:end">
+      <div>
+        <div class="small">Datum</div>
+        <input id="date" type="date">
+      </div>
+      <div>
+        <div class="small">Stunde</div>
+        <select id="hour">
+          <option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option>
+        </select>
+      </div>
+      <div style="flex:0 0 180px">
+        <div class="small">&nbsp;</div>
+        <button id="applyTimetableBtn" class="inline-btn" style="background:#0b6cff">Aus Stundenplan übernehmen</button>
+      </div>
+    </div>
+
+    <div class="small">Unterrichtsinhalt</div>
+    <textarea id="content" rows="3" placeholder="Kurz notieren..."></textarea>
+
+    <div class="small">Fehlzeiten (pro Schüler auswählen)</div>
+    <div id="studentsContainer" class="card" style="padding:8px"></div>
+
+    <input type="hidden" id="editingId" value="">
+    <div class="actions">
+      <button id="saveBtn">Schnell speichern</button>
+      <button id="cancelEditBtn" class="muted" style="display:none">Abbrechen</button>
+    </div>
+  </div>
+
+  <div id="list"></div>
+
+  <!-- Optionales Debug-Widget (kann entfernt werden) -->
+  <div class="card">
+    <div class="small">Debug: rohe Einträge</div>
+    <pre id="rawEntries" class="debug"></pre>
+  </div>
+
+  <script>
+    const kb = window.kbStorage;
+
+    if(!kb){
+      document.body.innerHTML = '<div style="padding:20px;color:#900">Fehler: storage.firebase.js oder Firebase nicht korrekt eingebunden.</div>';
+      throw new Error('kbStorage not available');
+    }
+
+    // DOM-Elemente
+    const courseSelect = document.getElementById('courseSelect');
+    const subjectSelect = document.getElementById('subjectSelect');
+    const teacherSelect = document.getElementById('teacherSelect');
+    const studentsContainer = document.getElementById('studentsContainer');
+    const list = document.getElementById('list');
+    const rawEntriesEl = document.getElementById('rawEntries');
+    const applyTimetableBtn = document.getElementById('applyTimetableBtn');
+    const timetableNote = document.getElementById('timetableNote');
+
+    // LocalStorage keys used by settings widget
+    const TEACHER_FILTER_SEL = 'teacher_filter_selected';
+    const TEACHER_FILTER_ONLY = 'teacher_filter_only';
+    // Hilfsfunktionen
+    function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c]); }
+    function formatAbsences(abs){
+      if(!abs || abs.length === 0) return '-';
+      return abs.map(a=>{
+        if(a.type === 'absent_whole') return `${a.student}: fehlt ganz`;
+        if(a.type === 'absent_until') return `${a.student}: fehlt bis ${a.to || '-'}`;
+        if(a.type === 'absent_from') return `${a.student}: fehlt ab ${a.from || '-'}`;
+        if(a.type === 'absent_fromto') return `${a.student}: fehlt ${a.from || '-'}–${a.to || '-'}`;
+        return `${a.student}: ${a.type}`;
+      }).join('; ');
+    }
+
+    // --- Meta Controls aufbauen (setzt voreingestellten Lehrer aus localStorage) ---
+    async function populateMetaControls(){
+      const meta = await kb.loadMeta();
+      courseSelect.innerHTML = (meta.courses || []).map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join('') || '<option value="">--kein Kurs--</option>';
+      subjectSelect.innerHTML = (meta.subjects || []).map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('') || '<option value="">--kein Fach--</option>';
+      teacherSelect.innerHTML = (meta.teachers || []).map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('') || '<option value="">--kein Lehrer--</option>';
+
+      // Voreinstellung: Lehrer aus settings (localStorage)
+      const savedTeacher = localStorage.getItem(TEACHER_FILTER_SEL) || '';
+      if (savedTeacher && Array.from(teacherSelect.options).some(o => o.value === savedTeacher)) {
+        teacherSelect.value = savedTeacher;
+      }
+
+      courseSelect.removeEventListener('change', onCourseChange);
+      courseSelect.addEventListener('change', onCourseChange);
+      subjectSelect.removeEventListener('change', onSubjectManualChange);
+      subjectSelect.addEventListener('change', onSubjectManualChange);
+      await onCourseChange();
+    }
+
+    function onSubjectManualChange(){
+      timetableNote.style.display = 'none';
+      saveLastSelection();
+    }
+
+    // Wenn Kurs gewechselt wird, nur die zugehörigen Schüler anzeigen
+    async function onCourseChange(){
+      const courseId = courseSelect.value;
+      const students = await kb.getStudentsForCourse(courseId);
+      studentsContainer.innerHTML = '';
+      if(!students || students.length === 0){
+        studentsContainer.innerHTML = '<div class="small">Keine Schüler für diesen Kurs</div>';
+        return;
+      }
+      students.forEach(stu => {
+        const row = document.createElement('div'); row.className = 'student-row';
+        row.innerHTML = `<label>${escapeHtml(stu)}</label>
+                         <select class="absenceType">
+                           <option value="present">anwesend</option>
+                           <option value="absent_whole">gefehlt ganz</option>
+                           <option value="absent_until">gefehlt bis</option>
+                           <option value="absent_fromto">gefehlt von-bis</option>
+                           <option value="absent_from">gefehlt ab</option>
+                         </select>
+                         <input type="time" class="timeFrom" style="display:none">
+                         <input type="time" class="timeTo" style="display:none">`;
+        studentsContainer.appendChild(row);
+      });
+      studentsContainer.querySelectorAll('.absenceType').forEach(sel=>{
+        sel.addEventListener('change', (ev)=>{
+          const row = ev.target.closest('.student-row');
+          const from = row.querySelector('.timeFrom');
+          const to = row.querySelector('.timeTo');
+          from.style.display = to.style.display = 'none';
+          if(ev.target.value === 'absent_until'){ to.style.display = 'inline-block'; }
+          if(ev.target.value === 'absent_from'){ from.style.display = 'inline-block'; }
+          if(ev.target.value === 'absent_fromto'){ from.style.display = to.style.display = 'inline-block'; }
+        });
+      });
+    }
+
+    // --- Entries rendern (liest Filter aus localStorage) ---
+    async function renderEntries(){
+      const entries = await kb.loadEntries();
+      rawEntriesEl.textContent = JSON.stringify(entries || [], null, 2);
+      list.innerHTML = '';
+      if(!entries || entries.length === 0){ list.innerHTML = '<div class="card small">Keine Einträge</div>'; return; }
+
+      const selTeacher = localStorage.getItem(TEACHER_FILTER_SEL) || '';
+      const onlyOwn = localStorage.getItem(TEACHER_FILTER_ONLY) === '1';
+
+      let filtered = entries;
+      if (onlyOwn && selTeacher) {
+        filtered = entries.filter(e => (e.teacher || '') === selTeacher);
+      }
+
+      filtered.slice().reverse().forEach(e=>{
+        const div = document.createElement('div'); div.className = 'card';
+        const absText = formatAbsences(e.absences || []);
+        // Buttons: Bearbeiten + Anlagen (Anlagen öffnet attachments.html?entryId=...)
+        const actionsHtml = `<div class="entry-actions">
+          ${!e.locked ? `<button class="editEntryBtn inline-btn" data-id="${e.id}" style="background:#0b6cff">Bearbeiten</button>` : ''}
+          <button class="attachmentsBtn inline-btn" data-id="${e.id}" style="background:#22a">Anlagen</button>
+        </div>`;
+        div.innerHTML = `<div class="small">${escapeHtml(e.date)} • Stunde ${escapeHtml(e.hour)} • ${escapeHtml(e.course)} • ${escapeHtml(e.subject)}</div>
+                         <div><strong>${escapeHtml(e.content || '-')}</strong></div>
+                         <div class="small">Fehlzeiten: ${escapeHtml(absText)}</div>
+                         <div class="small">Lehrer: ${escapeHtml(e.teacher || '-')} • Gesperrt: ${e.locked? 'Ja':'Nein'}</div>
+                         <div style="margin-top:8px">${actionsHtml}</div>`;
+        list.appendChild(div);
+      });
+    }
+    // Absences sammeln
+    function collectAbsences(){
+      const arr = [];
+      studentsContainer.querySelectorAll('.student-row').forEach(row=>{
+        const student = row.querySelector('label').textContent;
+        const type = row.querySelector('.absenceType').value;
+        const from = row.querySelector('.timeFrom').value;
+        const to = row.querySelector('.timeTo').value;
+        if(type === 'present') return;
+        const obj = { student, type };
+        if(type === 'absent_until') obj.to = to || '';
+        if(type === 'absent_from') obj.from = from || '';
+        if(type === 'absent_fromto'){ obj.from = from || ''; obj.to = to || ''; }
+        arr.push(obj);
+      });
+      return arr;
+    }
+
+    // --- LocalStorage: letzte Auswahl speichern / laden ---
+    const LS_KEY = 'kb_lastSelection';
+
+    function saveLastSelection() {
+      try {
+        const payload = {
+          course: courseSelect.value || '',
+          subject: subjectSelect.value || '',
+          teacher: teacherSelect.value || '',
+          hour: document.getElementById('hour').value || ''
+        };
+        localStorage.setItem(LS_KEY, JSON.stringify(payload));
+      } catch (e) {
+        console.warn('Could not save last selection', e);
+      }
+    }
+
+    function loadLastSelection() {
+      try {
+        const raw = localStorage.getItem(LS_KEY);
+        if (!raw) return null;
+        return JSON.parse(raw);
+      } catch (e) {
+        console.warn('Could not load last selection', e);
+        return null;
+      }
+    }
+
+    // Hook up change listeners so every change is persisted
+    courseSelect.addEventListener('change', () => { saveLastSelection(); onCourseChange(); });
+    subjectSelect.addEventListener('change', saveLastSelection);
+    teacherSelect.addEventListener('change', saveLastSelection);
+    document.getElementById('hour').addEventListener('change', saveLastSelection);
+
+    // Beim Initialisieren: nach populateMetaControls() aufrufen, um Optionen vorhanden zu haben
+    async function restoreLastSelectionAfterMeta() {
+      const last = loadLastSelection();
+      if (!last) return;
+      const courseOption = Array.from(courseSelect.options).find(o => o.value === last.course);
+      if (courseOption) {
+        courseSelect.value = last.course;
+      }
+      await onCourseChange();
+      const subjectOption = Array.from(subjectSelect.options).find(o => o.value === last.subject);
+      if (subjectOption) subjectSelect.value = last.subject;
+      const teacherOption = Array.from(teacherSelect.options).find(o => o.value === last.teacher);
+      if (teacherOption) teacherSelect.value = last.teacher;
+      const hourEl = document.getElementById('hour');
+      if (last.hour && Array.from(hourEl.options).some(o => o.value === last.hour)) {
+        hourEl.value = last.hour;
+      }
+    }
+
+    // --- Timetable helper: wochentag key aus Datum ---
+    function weekdayKeyFromDate(dateStr){
+      if(!dateStr) return null;
+      const d = new Date(dateStr + 'T00:00:00');
+      const wd = d.getDay(); // 0=So,1=Mo,...6=Sa
+      if(wd === 1) return 'mon';
+      if(wd === 2) return 'tue';
+      if(wd === 3) return 'wed';
+      if(wd === 4) return 'thu';
+      if(wd === 5) return 'fri';
+      return null; // Wochenende
+    }
+
+    // Apply timetable: setzt das Fach (subjectSelect) basierend auf Kurs/Datum/Stunde
+    applyTimetableBtn.addEventListener('click', async ()=>{
+      const courseId = courseSelect.value;
+      const dateVal = document.getElementById('date').value;
+      const hourVal = parseInt(document.getElementById('hour').value, 10);
+      if(!courseId) return alert('Bitte zuerst einen Kurs auswählen.');
+      if(!dateVal) return alert('Bitte zuerst ein Datum auswählen.');
+      if(!hourVal || hourVal < 1 || hourVal > 6) return alert('Bitte eine Stunde zwischen 1 und 6 wählen.');
+
+      const dayKey = weekdayKeyFromDate(dateVal);
+      if(!dayKey) return alert('Datum liegt nicht auf einem Schultag (Mo–Fr).');
+
+      const meta = await kb.loadMeta();
+      const course = (meta.courses || []).find(c => c.id === courseId);
+      if(!course) return alert('Kurs nicht gefunden im Stundenplan.');
+      const timetable = course.timetable || {};
+      const subjId = (timetable[dayKey] && timetable[dayKey][hourVal - 1]) || '';
+      if(!subjId){
+        return alert('Für diese Stunde ist kein Fach im Stundenplan eingetragen.');
+      }
+      // Setze subjectSelect nur wenn Option existiert
+      const opt = Array.from(subjectSelect.options).find(o => o.value === subjId);
+      if(opt){
+        subjectSelect.value = subjId;
+        timetableNote.style.display = 'inline-block';
+        saveLastSelection();
+      } else {
+        alert('Das im Stundenplan eingetragene Fach "' + subjId + '" ist nicht in der Fächerliste vorhanden. Bitte Admin prüfen.');
+      }
+    });
+
+    // --- Save / Update Eintrag ---
+    document.getElementById('saveBtn').addEventListener('click', async ()=>{
+      try{
+        const editingId = document.getElementById('editingId').value || '';
+        const entry = {
+          course: courseSelect.value,
+          subject: subjectSelect.value,
+          teacher: teacherSelect.value,
+          date: document.getElementById('date').value || new Date().toISOString().slice(0,10),
+          hour: document.getElementById('hour').value,
+          content: document.getElementById('content').value.trim(),
+          absences: collectAbsences(),
+          locked: false
+        };
+
+        if (editingId) {
+          const res = await kb.updateEntry(editingId, entry);
+          if(!res.ok){
+            if(res.reason === 'duplicate_target') {
+              alert('Update abgebrochen: Zielkombination (Kurs/Datum/Stunde) existiert bereits.');
+              return;
+            }
+            if(res.reason === 'locked') {
+              alert('Update abgebrochen: Eintrag ist gesperrt.');
+              return;
+            }
+            alert(res.reason || 'Update fehlgeschlagen');
+            return;
+          }
+          document.getElementById('editingId').value = '';
+          document.getElementById('saveBtn').textContent = 'Schnell speichern';
+          document.getElementById('cancelEditBtn').style.display = 'none';
+        } else {
+          const res = await kb.addEntry(entry);
+          if(!res.ok){
+            if(res.reason === 'duplicate'){
+              alert('Eintrag existiert bereits für diese Kombination aus Kurs/Datum/Stunde.');
+              return;
+            }
+            alert(res.reason || 'Speichern fehlgeschlagen');
+            return;
+          }
+        }
+
+        document.getElementById('content').value = '';
+        studentsContainer.querySelectorAll('.absenceType').forEach(s=>s.value='present');
+        studentsContainer.querySelectorAll('.timeFrom, .timeTo').forEach(i=>i.value='');
+        timetableNote.style.display = 'none';
+        await renderEntries();
+      } catch(err){
+        console.error(err);
+        alert('Fehler beim Speichern. Konsole prüfen.');
+      }
+    });
+
+    document.getElementById('cancelEditBtn').addEventListener('click', ()=>{
+      document.getElementById('editingId').value = '';
+      document.getElementById('saveBtn').textContent = 'Schnell speichern';
+      document.getElementById('cancelEditBtn').style.display = 'none';
+      timetableNote.style.display = 'none';
+      restoreLastSelectionAfterMeta();
+    });
+
+    // Delegation: Klick auf Bearbeiten oder Anlagen
+    document.addEventListener('click', async (ev) => {
+      if (ev.target.classList.contains('editEntryBtn')) {
+        const id = ev.target.dataset.id;
+        const entries = await kb.loadEntries();
+        const e = (entries || []).find(x => x.id === id);
+        if (!e) return alert('Eintrag nicht gefunden');
+        if (e.locked) return alert('Eintrag ist gesperrt und kann nicht bearbeitet werden');
+
+        document.getElementById('editingId').value = id;
+        courseSelect.value = e.course || '';
+        await onCourseChange();
+        subjectSelect.value = e.subject || '';
+        teacherSelect.value = e.teacher || '';
+        document.getElementById('date').value = e.date || new Date().toISOString().slice(0,10);
+        document.getElementById('hour').value = e.hour || '1';
+        document.getElementById('content').value = e.content || '';
+
+        studentsContainer.querySelectorAll('.student-row').forEach(row=>{
+          const name = row.querySelector('label').textContent;
+          const sel = row.querySelector('.absenceType');
+          const from = row.querySelector('.timeFrom');
+          const to = row.querySelector('.timeTo');
+          sel.value = 'present'; from.value=''; to.value=''; from.style.display=to.style.display='none';
+          const a = (e.absences||[]).find(x=>x.student === name);
+          if (a) {
+            sel.value = a.type || 'present';
+            if (a.type === 'absent_until') { to.value = a.to || ''; to.style.display='inline-block'; }
+            if (a.type === 'absent_from') { from.value = a.from || ''; from.style.display='inline-block'; }
+            if (a.type === 'absent_fromto') { from.value = a.from || ''; to.value = a.to || ''; from.style.display=to.style.display='inline-block'; }
+          }
+        });
+
+        document.getElementById('saveBtn').textContent = 'Änderungen speichern';
+        document.getElementById('cancelEditBtn').style.display = 'inline-block';
+        timetableNote.style.display = 'none';
+        saveLastSelection();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+
+      if (ev.target.classList.contains('attachmentsBtn')) {
+        const id = ev.target.dataset.id;
+        // Öffnet attachments.html in neuem Tab
+        window.open(`attachments.html?entryId=${encodeURIComponent(id)}`, '_blank');
+      }
+    });
+
+    // Reagiere auf Änderungen in anderen Tabs (settings.html)
+    window.addEventListener('storage', (e) => {
+      if (!e.key) return;
+      if (e.key === TEACHER_FILTER_SEL || e.key === TEACHER_FILTER_ONLY) {
+        try { renderEntries(); } catch (err) { console.warn('renderEntries error', err); }
+        if (e.key === TEACHER_FILTER_SEL && e.newValue !== null) {
+          const newVal = e.newValue || '';
+          if (newVal && Array.from(teacherSelect.options).some(o => o.value === newVal)) {
+            teacherSelect.value = newVal;
+          }
+        }
+      }
+    });
+
+    // Init
+    (async function init(){
+      try{
+        await kb.ensureDefaults();
+        document.getElementById('date').value = new Date().toISOString().slice(0,10);
+        await populateMetaControls();
+        await restoreLastSelectionAfterMeta();
+        await renderEntries();
+      } catch(err){
+        console.error('Init error', err);
+      }
+    })();
+  </script>
+</body>
+</html>
