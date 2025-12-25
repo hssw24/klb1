@@ -264,7 +264,6 @@
           id: d.id,
           name: data.name || d.id,
           url: data.url || '',
-          thumbnailUrl: data.thumbnailUrl || '',
           uploadedAt: data.uploadedAt || null,
           uploadedBy: data.uploadedBy || null,
           meta: data.meta || {}
@@ -277,56 +276,24 @@
     }
   };
 
-  // Upsert-Version: sucht nach existierendem Dokument mit gleichem name und merged, sonst add
   global.kbStorage.addAttachmentMeta = async function(entryId, metaObj){
     if(!entryId || !metaObj || !metaObj.name || !metaObj.url) {
       return { ok:false, reason: 'missing_parameters' };
     }
     try {
       const col = db.collection('entries').doc(entryId).collection('attachments');
-      const payload = {
+      const payload = Object.assign({
         name: metaObj.name,
         url: metaObj.url,
         uploadedAt: metaObj.uploadedAt || Date.now(),
         uploadedBy: metaObj.uploadedBy || null,
-        meta: metaObj.meta || {},
-        thumbnailUrl: metaObj.thumbnailUrl || null
-      };
-
-      // Suche nach existierendem Dokument mit gleichem name
-      const q = await col.where('name', '==', metaObj.name).limit(1).get();
-      if (!q.empty) {
-        const docRef = q.docs[0].ref;
-        // Merge: nur die übergebenen Felder aktualisieren
-        await docRef.set(payload, { merge: true });
-        return { ok:true, id: docRef.id, updated: true };
-      } else {
-        const docRef = await col.add(payload);
-        return { ok:true, id: docRef.id, created: true };
-      }
+        meta: metaObj.meta || {}
+      }, {});
+      const docRef = await col.add(payload);
+      return { ok:true, id: docRef.id };
     } catch (err) {
       console.error('addAttachmentMeta error', err);
       return { ok:false, reason: err.message || 'firestore_error' };
-    }
-  };
-
-  // Explizite Thumbnail-Update-Funktion (idempotent)
-  global.kbStorage.updateAttachmentThumbnail = async function(entryId, name, thumbnailUrl){
-    if(!entryId || !name || !thumbnailUrl) return { ok:false, reason:'missing_parameters' };
-    try {
-      const col = db.collection('entries').doc(entryId).collection('attachments');
-      const q = await col.where('name','==',name).limit(1).get();
-      if (!q.empty) {
-        await q.docs[0].ref.set({ thumbnailUrl }, { merge: true });
-        return { ok:true, id: q.docs[0].id, updated: true };
-      } else {
-        // Falls kein Metadoc existiert, lege ein minimales Dokument an
-        const docRef = await col.add({ name, url: '', thumbnailUrl, uploadedAt: Date.now() });
-        return { ok:true, id: docRef.id, created:true };
-      }
-    } catch (e) {
-      console.error('updateAttachmentThumbnail error', e);
-      return { ok:false, reason: e.message || 'error' };
     }
   };
 
@@ -360,7 +327,7 @@
       const data = docSnap.data();
       const name = data.name;
       const url = data.url || '';
-      const isCloudinary = typeof url === 'string' && url.includes('res.cloudinary.com');
+      const isCloudinary = url.includes('res.cloudinary.com');
 
       if (!isCloudinary && name) {
         try {
@@ -394,4 +361,3 @@
   };
 
 })(window);
-

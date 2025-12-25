@@ -117,11 +117,15 @@
       }
     }
 
-    // Erzeugt eine Cloudinary Fetch-Thumbnail-URL (page, jpg, size)
+    // Hilfsfunktion: erzeugt Cloudinary-Fetch-Thumbnail-URL für eine gegebene Datei-URL
     function makeCloudinaryFetchThumbnail(originalUrl, opts = { w:300, h:400, crop:'thumb', page:1 }){
       if (!CLOUDINARY_CONFIG.cloudName || !originalUrl) return '';
+      // encode original URL
       const encoded = encodeURIComponent(originalUrl);
+      // Transformation: page (für PDFs), fetch, format jpg, size/crop
+      // page wird als separate transformation vor fetch; Cloudinary wird die erste Seite rendern
       const trans = `page_${opts.page},f_jpg,w_${opts.w},h_${opts.h},c_${opts.crop}`;
+      // Use image/fetch with transformation
       return `https://res.cloudinary.com/${CLOUDINARY_CONFIG.cloudName}/image/fetch/${trans}/${encoded}`;
     }
 
@@ -129,12 +133,14 @@
     async function listAttachments(){
       attachmentsList.innerHTML = 'Lade…';
       try {
+        // 1) Firestore-Metadaten (wenn helper vorhanden)
         if (window.kbStorage && typeof kbStorage.listAttachmentsForEntry === 'function') {
           const list = await kbStorage.listAttachmentsForEntry(entryId);
           renderAttachments(list || []);
           return;
         }
 
+        // 2) Fallback: Firebase Storage listing
         const storage = firebase.storage();
         const ref = storage.ref().child(`attachments/${entryId}`);
         const res = await ref.listAll();
@@ -149,11 +155,11 @@
       }
     }
 
-    // Rendert Liste; verwendet nur gespeicherte thumbnailUrl (keine Schreibvorgänge beim Rendern)
-    function renderAttachments(items){
+    // Rendert Liste; erzeugt Thumbnails für PDFs (falls möglich)
+    async function renderAttachments(items){
       if(!items || items.length === 0){ attachmentsList.innerHTML = '<div class="small">Keine Anlagen</div>'; return; }
       attachmentsList.innerHTML = '';
-      items.forEach(it => {
+      for (const it of items){
         const row = document.createElement('div'); row.className = 'file-row';
         const left = document.createElement('div'); left.style.flex='1';
         const filename = it.name || (it.url || '').split('/').pop() || 'Datei';
@@ -161,13 +167,33 @@
         const isImage = /\.(jpe?g|png|gif|webp|bmp)$/i.test(lower) || /\.(jpe?g|png|gif|webp|bmp)$/i.test(it.url || '');
         const isPdf = /\.pdf$/i.test(lower) || /\.pdf$/i.test(it.url || '');
 
-        const thumb = it.thumbnailUrl || '';
+        let thumbUrl = it.thumbnailUrl || '';
 
-        if (isImage) {
+        // Wenn kein gespeichertes thumbnailUrl vorhanden ist, versuche eine Cloudinary-Fetch-Thumbnail zu erzeugen (nur wenn Cloudinary konfiguriert)
+        if (!thumbUrl && isPdf && USE_CLOUDINARY && it.url) {
+          try {
+            thumbUrl = makeCloudinaryFetchThumbnail(it.url, { w:300, h:400, crop:'thumb', page:1 });
+            // Optional: speichere thumbnailUrl in Metadaten, falls helper vorhanden
+            if (window.kbStorage && typeof kbStorage.addAttachmentMeta === 'function') {
+              // addAttachmentMeta sollte idempotent oder ergänzend sein; hier speichern wir nur thumbnailUrl
+              try {
+                await kbStorage.addAttachmentMeta(entryId, { name: it.name, url: it.url, thumbnailUrl: thumbUrl, uploadedAt: it.uploadedAt || Date.now() });
+              } catch(e){
+                // ignore write errors
+                console.warn('thumbnail save failed', e);
+              }
+            }
+          } catch(e){
+            console.warn('could not create thumbnail', e);
+            thumbUrl = '';
+          }
+        }
+
+        if (isImage){
           left.innerHTML = `<img src="${it.url}" class="preview" alt="${escapeHtml(filename)}">`;
-        } else if (isPdf && thumb) {
-          left.innerHTML = `<img src="${thumb}" class="preview" alt="Vorschau ${escapeHtml(filename)}">`;
-        } else if (isPdf) {
+        } else if (isPdf && thumbUrl){
+          left.innerHTML = `<img src="${thumbUrl}" class="preview" alt="Vorschau ${escapeHtml(filename)}">`;
+        } else if (isPdf){
           left.innerHTML = `<div class="pdf-icon">PDF</div><div class="meta-line">${escapeHtml(filename)}</div>`;
         } else {
           left.innerHTML = `<div class="meta-line">${escapeHtml(filename)}</div>`;
@@ -198,7 +224,7 @@
         right.appendChild(a); right.appendChild(del);
         row.appendChild(left); row.appendChild(right);
         attachmentsList.appendChild(row);
-      });
+      }
     }
 
     // Upload-Funktion (Cloudinary raw/image oder Firebase Storage)
@@ -253,7 +279,7 @@
 
     function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c]); }
 
-    // Upload-Handler: lädt Dateien hoch, sichert öffentliche URL und erzeugt Thumbnail beim Upload
+    // Upload-Handler: lädt Dateien hoch, sichert öffentliche URL und speichert Metadaten
     uploadBtn.addEventListener('click', async ()=>{
       const files = [];
       if (galleryInput.files && galleryInput.files.length) for(const f of galleryInput.files) files.push(f);
@@ -283,29 +309,22 @@
             }
           }
 
-          // Erzeuge Thumbnail-URL sofort (nur wenn Cloudinary konfiguriert und PDF)
+          // Optional: Erzeuge Thumbnail-URL sofort (nur wenn Cloudinary konfiguriert)
           let thumbnailUrl = '';
           if (publicUrl && USE_CLOUDINARY && /\.pdf$/i.test(res.name || publicUrl)) {
             thumbnailUrl = makeCloudinaryFetchThumbnail(publicUrl, { w:300, h:400, crop:'thumb', page:1 });
           }
 
-          // Speichere Metadaten idempotent: updateAttachmentThumbnail wenn verfügbar, sonst addAttachmentMeta (Upsert)
-          if (window.kbStorage && typeof kbStorage.updateAttachmentThumbnail === 'function') {
-            // updateAttachmentThumbnail ist idempotent und erstellt minimalen Doc falls nötig
-            await kbStorage.updateAttachmentThumbnail(entryId, res.name, thumbnailUrl || '');
-            // ensure url is set as well (merge)
-            await kbStorage.addAttachmentMeta(entryId, { name: res.name, url: publicUrl, thumbnailUrl: thumbnailUrl || '', uploadedAt: Date.now(), meta: { size: f.size, type: f.type } });
-          } else if (window.kbStorage && typeof kbStorage.addAttachmentMeta === 'function') {
-            // addAttachmentMeta in storage.firebase.js ist Upsert; safe to call
+          if (window.kbStorage && typeof kbStorage.addAttachmentMeta === 'function') {
             await kbStorage.addAttachmentMeta(entryId, {
               name: res.name,
               url: publicUrl,
-              thumbnailUrl: thumbnailUrl || '',
+              thumbnailUrl: thumbnailUrl,
               uploadedAt: Date.now(),
               meta: { size: f.size, type: f.type }
             });
           } else {
-            console.info('kbStorage helper nicht vorhanden; Metadaten nicht gespeichert.');
+            console.info('kbStorage.addAttachmentMeta nicht vorhanden; Metadaten nicht gespeichert.');
           }
         } catch(err){
           console.error('Upload error', err);

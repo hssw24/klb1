@@ -1,0 +1,10 @@
+      apiKey: "AIzaSyBdflIYtuxvtzwnJmOIfVwNByR9E7uAnwU",
+      authDomain: "klbuch-57460.firebaseapp.com",
+      projectId: "klbuch-57460"
+      
+      
+  const cloudName = "dbevz8t2n";
+  const uploadPreset = "unsigned_upload";
+  
+  unsigned-pdf
+  
