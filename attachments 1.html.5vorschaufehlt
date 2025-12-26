@@ -67,7 +67,7 @@
     const firebaseConfig = {
       apiKey: "AIzaSyBdflIYtuxvtzwnJmOIfVwNByR9E7uAnwU",
       authDomain: "klbuch-57460.firebaseapp.com",
-      projectId: "klbuch-57460"
+      projectId: "klbuch-57460"      
     };
     firebase.initializeApp(firebaseConfig);
   </script>
@@ -117,64 +117,36 @@
       }
     }
 
-    // Robustere Thumbnail-URL-Erzeugung (async, versucht derived dann fetch)
-    async function makeCloudinaryFetchThumbnail(originalUrl, opts = { w:300, h:400, crop:'thumb', page:1 }) {
+    // Robustere Thumbnail-URL-Erzeugung (Patch)
+    function makeCloudinaryFetchThumbnail(originalUrl, opts = { w:300, h:400, crop:'thumb', page:1 }) {
       if (!CLOUDINARY_CONFIG.cloudName || !originalUrl) return '';
+
       originalUrl = String(originalUrl).trim();
       if (!originalUrl) return '';
 
-      function safeEncode(url) {
-        let decoded = url;
-        try {
-          if (/%[0-9A-Fa-f]{2}/.test(url)) {
-            try { decoded = decodeURIComponent(url); } catch(e) { decoded = url; }
-          }
-        } catch(e){ decoded = url; }
-        return encodeURIComponent(decoded);
-      }
-
-      // 1) Versuch: direkte derived URL, wenn die Ressource bereits in deinem Cloudinary liegt
       try {
         const cloudHost = `res.cloudinary.com/${CLOUDINARY_CONFIG.cloudName}`;
         if (originalUrl.includes(cloudHost) && originalUrl.includes('/raw/upload/')) {
           const parts = originalUrl.split('/raw/upload/');
-          if (parts.length === 2) {
-            const prefix = parts[0]; // https://res.cloudinary.com/<cloud>
-            const after = parts[1];  // v123/.../file.pdf
-            const trans = `page_${opts.page},f_jpg,w_${opts.w},h_${opts.h},c_${opts.crop}`;
-            const derived = `${prefix}/image/upload/${trans}/${after}`;
-            console.log('makeCloudinaryFetchThumbnail: trying derived URL', derived);
-            try {
-              const head = await fetch(derived, { method: 'HEAD' });
-              console.log('HEAD derived ->', head.status);
-              if (head.ok) return derived;
-            } catch(e){
-              console.warn('HEAD derived failed', e);
-            }
-          }
+          const prefix = parts[0]; // https://res.cloudinary.com/<cloud>
+          const after = parts[1];  // v123/.../file.pdf
+          const trans = `page_${opts.page},f_jpg,w_${opts.w},h_${opts.h},c_${opts.crop}`;
+          return `${prefix}/image/upload/${trans}/${after}`;
         }
       } catch (e) {
-        console.warn('derived attempt failed, will fallback to fetch', e);
+        console.warn('makeCloudinaryFetchThumbnail: cloudinary-derive failed, fallback to fetch', e);
       }
 
-      // 2) Fallback: image/fetch mit einmalig korrekt kodierter Original-URL
+      let decoded = originalUrl;
       try {
-        const encoded = safeEncode(originalUrl);
-        const trans = `page_${opts.page},f_jpg,w_${opts.w},h_${opts.h},c_${opts.crop}`;
-        const fetchUrl = `https://res.cloudinary.com/${CLOUDINARY_CONFIG.cloudName}/image/fetch/${trans}/${encoded}`;
-        console.log('makeCloudinaryFetchThumbnail: trying fetch URL', fetchUrl);
-        try {
-          const head2 = await fetch(fetchUrl, { method: 'HEAD' });
-          console.log('HEAD fetch ->', head2.status);
-          return fetchUrl;
-        } catch(e){
-          console.warn('HEAD fetch failed', e);
-          return fetchUrl;
+        if (/%[0-9A-Fa-f]{2}/.test(originalUrl)) {
+          try { decoded = decodeURIComponent(originalUrl); } catch(e) { decoded = originalUrl; }
         }
-      } catch (e) {
-        console.error('makeCloudinaryFetchThumbnail: fallback failed', e);
-        return '';
-      }
+      } catch(e){ decoded = originalUrl; }
+
+      const encoded = encodeURIComponent(decoded);
+      const trans = `page_${opts.page},f_jpg,w_${opts.w},h_${opts.h},c_${opts.crop}`;
+      return `https://res.cloudinary.com/${CLOUDINARY_CONFIG.cloudName}/image/fetch/${trans}/${encoded}`;
     }
 
     // Listing: bevorzugt Firestore-Metadaten
@@ -183,7 +155,7 @@
       try {
         if (window.kbStorage && typeof kbStorage.listAttachmentsForEntry === 'function') {
           const list = await kbStorage.listAttachmentsForEntry(entryId);
-          await renderAttachments(list || []);
+          renderAttachments(list || []);
           return;
         }
 
@@ -194,18 +166,18 @@
           const url = await itemRef.getDownloadURL();
           return { name: itemRef.name, url };
         }));
-        await renderAttachments(items);
+        renderAttachments(items);
       } catch (err) {
         console.error('listAttachments error', err);
         attachmentsList.innerHTML = '<div class="small">Fehler beim Laden der Anlagen. Konsole prüfen.</div>';
       }
     }
 
-    // Rendert Liste; wenn kein thumbnailUrl vorhanden ist, versucht on-the-fly eine Thumbnail-URL zu erzeugen (zeigt sie, speichert sie aber nicht)
-    async function renderAttachments(items){
+    // Rendert Liste; verwendet nur gespeicherte thumbnailUrl (keine Schreibvorgänge beim Rendern)
+    function renderAttachments(items){
       if(!items || items.length === 0){ attachmentsList.innerHTML = '<div class="small">Keine Anlagen</div>'; return; }
       attachmentsList.innerHTML = '';
-      for (const it of items){
+      items.forEach(it => {
         const row = document.createElement('div'); row.className = 'file-row';
         const left = document.createElement('div'); left.style.flex='1';
         const filename = it.name || (it.url || '').split('/').pop() || 'Datei';
@@ -213,16 +185,7 @@
         const isImage = /\.(jpe?g|png|gif|webp|bmp)$/i.test(lower) || /\.(jpe?g|png|gif|webp|bmp)$/i.test(it.url || '');
         const isPdf = /\.pdf$/i.test(lower) || /\.pdf$/i.test(it.url || '');
 
-        let thumb = it.thumbnailUrl || '';
-
-        if (!thumb && isPdf && USE_CLOUDINARY && it.url) {
-          try {
-            thumb = await makeCloudinaryFetchThumbnail(it.url, { w:300, h:400, crop:'thumb', page:1 });
-          } catch(e){
-            console.warn('thumbnail generation failed', e);
-            thumb = '';
-          }
-        }
+        const thumb = it.thumbnailUrl || '';
 
         if (isImage) {
           left.innerHTML = `<img src="${it.url}" class="preview" alt="${escapeHtml(filename)}">`;
@@ -259,7 +222,7 @@
         right.appendChild(a); right.appendChild(del);
         row.appendChild(left); row.appendChild(right);
         attachmentsList.appendChild(row);
-      }
+      });
     }
 
     // Upload-Funktion (Cloudinary raw/image oder Firebase Storage)
@@ -347,7 +310,7 @@
           // Erzeuge Thumbnail-URL sofort (nur wenn Cloudinary konfiguriert und PDF)
           let thumbnailUrl = '';
           if (publicUrl && USE_CLOUDINARY && /\.pdf$/i.test(res.name || publicUrl)) {
-            thumbnailUrl = await makeCloudinaryFetchThumbnail(publicUrl, { w:300, h:400, crop:'thumb', page:1 });
+            thumbnailUrl = makeCloudinaryFetchThumbnail(publicUrl, { w:300, h:400, crop:'thumb', page:1 });
           }
 
           // Speichere Metadaten idempotent: updateAttachmentThumbnail wenn verfügbar, sonst addAttachmentMeta (Upsert)
@@ -384,5 +347,5 @@
     listAttachments();
   })();
   </script>
-</body>
 </html>
+</body>
