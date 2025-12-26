@@ -67,7 +67,7 @@
     const firebaseConfig = {
       apiKey: "AIzaSyBdflIYtuxvtzwnJmOIfVwNByR9E7uAnwU",
       authDomain: "klbuch-57460.firebaseapp.com",
-      projectId: "klbuch-57460"      
+      projectId: "klbuch-57460"
     };
     firebase.initializeApp(firebaseConfig);
   </script>
@@ -117,34 +117,10 @@
       }
     }
 
-    // Robustere Thumbnail-URL-Erzeugung (Patch)
-    function makeCloudinaryFetchThumbnail(originalUrl, opts = { w:300, h:400, crop:'thumb', page:1 }) {
+    // Erzeugt eine Cloudinary Fetch-Thumbnail-URL (page, jpg, size)
+    function makeCloudinaryFetchThumbnail(originalUrl, opts = { w:300, h:400, crop:'thumb', page:1 }){
       if (!CLOUDINARY_CONFIG.cloudName || !originalUrl) return '';
-
-      originalUrl = String(originalUrl).trim();
-      if (!originalUrl) return '';
-
-      try {
-        const cloudHost = `res.cloudinary.com/${CLOUDINARY_CONFIG.cloudName}`;
-        if (originalUrl.includes(cloudHost) && originalUrl.includes('/raw/upload/')) {
-          const parts = originalUrl.split('/raw/upload/');
-          const prefix = parts[0]; // https://res.cloudinary.com/<cloud>
-          const after = parts[1];  // v123/.../file.pdf
-          const trans = `page_${opts.page},f_jpg,w_${opts.w},h_${opts.h},c_${opts.crop}`;
-          return `${prefix}/image/upload/${trans}/${after}`;
-        }
-      } catch (e) {
-        console.warn('makeCloudinaryFetchThumbnail: cloudinary-derive failed, fallback to fetch', e);
-      }
-
-      let decoded = originalUrl;
-      try {
-        if (/%[0-9A-Fa-f]{2}/.test(originalUrl)) {
-          try { decoded = decodeURIComponent(originalUrl); } catch(e) { decoded = originalUrl; }
-        }
-      } catch(e){ decoded = originalUrl; }
-
-      const encoded = encodeURIComponent(decoded);
+      const encoded = encodeURIComponent(originalUrl);
       const trans = `page_${opts.page},f_jpg,w_${opts.w},h_${opts.h},c_${opts.crop}`;
       return `https://res.cloudinary.com/${CLOUDINARY_CONFIG.cloudName}/image/fetch/${trans}/${encoded}`;
     }
@@ -315,9 +291,12 @@
 
           // Speichere Metadaten idempotent: updateAttachmentThumbnail wenn verfügbar, sonst addAttachmentMeta (Upsert)
           if (window.kbStorage && typeof kbStorage.updateAttachmentThumbnail === 'function') {
+            // updateAttachmentThumbnail ist idempotent und erstellt minimalen Doc falls nötig
             await kbStorage.updateAttachmentThumbnail(entryId, res.name, thumbnailUrl || '');
+            // ensure url is set as well (merge)
             await kbStorage.addAttachmentMeta(entryId, { name: res.name, url: publicUrl, thumbnailUrl: thumbnailUrl || '', uploadedAt: Date.now(), meta: { size: f.size, type: f.type } });
           } else if (window.kbStorage && typeof kbStorage.addAttachmentMeta === 'function') {
+            // addAttachmentMeta in storage.firebase.js ist Upsert; safe to call
             await kbStorage.addAttachmentMeta(entryId, {
               name: res.name,
               url: publicUrl,
@@ -347,5 +326,5 @@
     listAttachments();
   })();
   </script>
-</html>
 </body>
+</html>
