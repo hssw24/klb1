@@ -53,7 +53,7 @@
 
     <hr>
 
-    <div class="small">Vorhandene Anlagen 26.12.2037</div>
+    <div class="small">Vorhandene Anlagen 26.12.2035</div>
     <div id="attachmentsList">Lade…</div>
   </div>
 
@@ -142,7 +142,7 @@
             const prefix = parts[0]; // https://res.cloudinary.com/<cloud>
             const after = parts[1];  // v123/.../file.pdf
             const trans = `page_${opts.page},f_jpg,w_${opts.w},h_${opts.h},c_${opts.crop}`;
-            const derived = `${prefix}/raw/upload/${trans}/${after}`;
+            const derived = `${prefix}/image/upload/${trans}/${after}`;
             console.log('makeCloudinaryFetchThumbnail: trying derived URL', derived);
             try {
               const head = await fetch(derived, { method: 'HEAD' });
@@ -161,7 +161,7 @@
       try {
         const encoded = safeEncode(originalUrl);
         const trans = `page_${opts.page},f_jpg,w_${opts.w},h_${opts.h},c_${opts.crop}`;
-        const fetchUrl = `https://res.cloudinary.com/${CLOUDINARY_CONFIG.cloudName}/raw/fetch/${trans}/${encoded}`;
+        const fetchUrl = `https://res.cloudinary.com/${CLOUDINARY_CONFIG.cloudName}/image/fetch/${trans}/${encoded}`;
         console.log('makeCloudinaryFetchThumbnail: trying fetch URL', fetchUrl);
         try {
           const head2 = await fetch(fetchUrl, { method: 'HEAD' });
@@ -315,7 +315,6 @@
     function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c]); }
 
     // Upload-Handler: lädt Dateien hoch, sichert öffentliche URL und erzeugt Thumbnail beim Upload
-    
     uploadBtn.addEventListener('click', async ()=>{
       const files = [];
       if (galleryInput.files && galleryInput.files.length) for(const f of galleryInput.files) files.push(f);
